@@ -1,0 +1,19 @@
+# .clangd
+CompileFlags:
+  CompilationDatabase: /home/ma/kernel/Linux5.10
+
+  # 强制 clangd 使用 arm64/aarch64 目标架构去解析文件，防止识别为 x86
+  Add: [-target, aarch64-none-linux-gnu]
+  
+  # 移除 GCC 特有但 Clang 无法识别的编译参数，避免 clangd 报编译实例构建失败的错误
+  Remove: [
+    -fconserve-stack,
+    -fno-allow-store-data-races,
+    -mno-fp-ret-in-387,
+    -mskip-rax-setup,
+    -mno-80387,
+    -mamp,
+    -mno-pic,
+    -mno-global-merge,
+    -mabi=lp64
+  ]
