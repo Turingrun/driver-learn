@@ -1,3 +1,8 @@
+#include "linux/device.h"
+#include "linux/device/class.h"
+#include "linux/export.h"
+#include "linux/kdev_t.h"
+#include "linux/types.h"
 #include <linux/cdev.h>
 #include <linux/fs.h>
 #include <linux/init.h>
@@ -7,9 +12,8 @@
 
 #define GLOBALMEM_SIZE 0x1000
 #define MEM_CLEAR 0x1
-#define GLOBALMEM_MAJOR 230
 
-static int globalmem_major = GLOBALMEM_MAJOR;
+static int globalmem_major;
 module_param(globalmem_major, int, S_IRUGO);
 
 struct globalmem_dev {
@@ -18,6 +22,8 @@ struct globalmem_dev {
 };
 
 struct globalmem_dev *globalmem_devp;
+static struct class *globalmem_class;
+static struct device *globalmem_device;
 
 static int globalmem_open(struct inode *inode, struct file *filp) {
   filp->private_data = globalmem_devp;
@@ -75,12 +81,61 @@ static ssize_t globalmem_write(struct file *filp, const char __user *buf,
   return ret;
 }
 
+static loff_t globalmem_llseek(struct file *filp, loff_t offset, int orig) {
+  loff_t ret = 0;
+  switch (orig) {
+  case 0: /* 从文件开头位置seek */
+    if (offset < 0) {
+      ret = -EINVAL;
+      break;
+    }
+    if ((unsigned int)offset > GLOBALMEM_SIZE) {
+      ret = -EINVAL;
+      break;
+    }
+    filp->f_pos = (unsigned int)offset;
+    ret = filp->f_pos;
+    break;
+  case 1: /* 从文件当前位置开始seek */
+    if ((filp->f_pos + offset) > GLOBALMEM_SIZE) {
+      ret = -EINVAL;
+      break;
+    }
+    if ((filp->f_pos + offset) < 0) {
+      ret = -EINVAL;
+      break;
+    }
+    filp->f_pos += offset;
+    ret = filp->f_pos;
+    break;
+  default:
+    ret = -EINVAL;
+    break;
+  }
+  return ret;
+}
+
+static long globalmem_ioctl(struct file *filp, unsigned int cmd,
+                            unsigned long arg) {
+  struct globalmem_dev *dev = filp->private_data;
+  switch (cmd) {
+  case MEM_CLEAR:
+    memset(dev->mem, 0, GLOBALMEM_SIZE);
+    printk(KERN_INFO "globalmem is set to zero\n");
+    break;
+
+  default:
+    return -EINVAL;
+  }
+  return 0;
+}
+
 static const struct file_operations globalmem_fops = {
     .owner = THIS_MODULE,
-    // .llseek = globalmem_llseek,
+    .llseek = globalmem_llseek,
     .read = globalmem_read,
     .write = globalmem_write,
-    // .unlocked_ioctl = globalmem_ioctl,
+    .unlocked_ioctl = globalmem_ioctl,
     .open = globalmem_open,
     .release = globalmem_release,
 };
@@ -99,12 +154,8 @@ static int __init globalmem_init(void) {
   int ret;
   dev_t devno = MKDEV(globalmem_major, 0);
 
-  if (globalmem_major)
-    ret = register_chrdev_region(devno, 1, "globalmem");
-  else {
-    ret = alloc_chrdev_region(&devno, 0, 1, "globalmem");
-    globalmem_major = MAJOR(devno);
-  }
+  ret = alloc_chrdev_region(&devno, 0, 1, "globalmem");
+  globalmem_major = MAJOR(devno);
   if (ret < 0)
     return ret;
 
@@ -115,6 +166,9 @@ static int __init globalmem_init(void) {
   }
 
   globalmem_setup_cdev(globalmem_devp, 0);
+  globalmem_class = class_create(THIS_MODULE, "globalmem");
+  globalmem_device = device_create(
+      globalmem_class, NULL, MKDEV(globalmem_major, 0), NULL, "globalmem");
   return 0;
 
 fail_malloc:
@@ -123,6 +177,9 @@ fail_malloc:
 }
 
 static void __exit globalmem_exit(void) {
+  dev_t dev = MKDEV(globalmem_major, 0);
+  device_destroy(globalmem_class, dev);
+  class_destroy(globalmem_class);
   cdev_del(&globalmem_devp->cdev);
   kfree(globalmem_devp);
   unregister_chrdev_region(MKDEV(globalmem_major, 0), 1);
