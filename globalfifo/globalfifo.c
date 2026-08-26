@@ -86,7 +86,7 @@ static ssize_t globalfifo_read(struct file *filp, char __user *buf,
 out:
   mutex_unlock(&dev->mutex);
 out2:
-  remove_wait_queue(&dev->w_wait, &wait);
+  remove_wait_queue(&dev->r_wait, &wait);
   set_current_state(TASK_RUNNING);
   return ret;
 }
