@@ -1,7 +1,4 @@
-obj-m += mychar/
-obj-m += globalmem/
-obj-m += globalfifo/
-obj-m += globalfifo_poll/
+obj-m += globalfifo_poll.o
 
 KDIR := ~/kernel/Linux5.10
 ARCH := arm64
