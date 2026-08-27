@@ -178,6 +178,7 @@ static long globalfifo_ioctl(struct file *filp, unsigned int cmd,
     mutex_lock(&dev->mutex);
     memset(dev->mem, 0, GLOBALFIFO_SIZE);
     dev->current_len = 0;
+    wake_up_interruptible(&dev->w_wait);
     printk(KERN_INFO "globalfifo is set to zero\n");
     mutex_unlock(&dev->mutex);
     break;
