@@ -1,4 +1,5 @@
 obj-m += globalfifo_poll.o
+obj-m += g_fifo_poll_waitevint.o
 
 KDIR := ~/kernel/Linux5.10
 ARCH := arm64
