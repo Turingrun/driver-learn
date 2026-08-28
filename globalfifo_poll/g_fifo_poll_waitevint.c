@@ -1,12 +1,8 @@
-#include "asm/current.h"
 #include "linux/device.h"
 #include "linux/device/class.h"
-#include "linux/errno.h"
 #include "linux/export.h"
 #include "linux/kdev_t.h"
 #include "linux/mutex.h"
-#include "linux/sched.h"
-#include "linux/sched/signal.h"
 #include "linux/types.h"
 #include "linux/wait.h"
 #include <linux/cdev.h>
@@ -60,8 +56,8 @@ static ssize_t globalfifo_read(struct file *filp, char __user *buf,
     /* 等待时必须释放互斥锁，让写进程有机会写入数据并唤醒读进程。 */
     mutex_unlock(&dev->mutex);
 
-    ret = wait_event_interruptible(
-        dev->r_wait, READ_ONCE(dev->current_len) != 0);
+    ret =
+        wait_event_interruptible(dev->r_wait, READ_ONCE(dev->current_len) != 0);
     if (ret)
       return ret;
 
@@ -102,8 +98,8 @@ static ssize_t globalfifo_write(struct file *filp, const char __user *buf,
     /* 等待读进程腾出空间，等待期间不能持有互斥锁。 */
     mutex_unlock(&dev->mutex);
 
-    ret = wait_event_interruptible(
-        dev->w_wait, READ_ONCE(dev->current_len) != GLOBALFIFO_SIZE);
+    ret = wait_event_interruptible(dev->w_wait, READ_ONCE(dev->current_len) !=
+                                                    GLOBALFIFO_SIZE);
     if (ret)
       return ret;
 
