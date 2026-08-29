@@ -1,4 +1,5 @@
 #include "linux/dev_printk.h"
+#include "linux/i2c.h"
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/gfp.h>
@@ -19,12 +20,19 @@ struct aht20 {
 static int aht20_probe(struct i2c_client *client) {
   struct device *dev = &client->dev;
   struct aht20 *aht20;
+  if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
+    return -EOPNOTSUPP;
+  }
+
   aht20 = devm_kzalloc(dev, sizeof(*aht20), GFP_KERNEL);
   if (!aht20)
     return -ENOMEM;
 
   aht20->client = client;
   mutex_init(&aht20->lock);
+
+  i2c_set_clientdata(client, aht20);
+
   dev_info(&client->dev, "my sensor probe\n");
 
   dev_info(&client->dev, "i2c addr = 0x%02x\n", client->addr);
