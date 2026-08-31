@@ -1,7 +1,6 @@
 # .clangd
 CompileFlags:
   CompilationDatabase: /home/ma/kernel/Linux5.10
-
   # 强制 clangd 使用 arm64/aarch64 目标架构去解析文件，防止识别为 x86
   Add: [-target, aarch64-none-linux-gnu]
   
@@ -17,3 +16,5 @@ CompileFlags:
     -mno-global-merge,
     -mabi=lp64
   ]
+Completion:
+  HeaderInsertion: Never
