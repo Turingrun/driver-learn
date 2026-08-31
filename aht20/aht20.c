@@ -7,6 +7,7 @@
 #include <linux/hwmon.h>
 #include <linux/i2c.h>
 #include <linux/init.h>
+#include <linux/jiffies.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -14,6 +15,8 @@
 #define AHT20_INTERVAL 80
 #define AHT20_STATUS_BUSY BIT(7)
 #define AHT20_STATUS_CALIBRATED BIT(3)
+#define AHT20_CACHE_TIME_MS 1000
+
 struct aht20 {
   struct i2c_client *client;
   struct mutex lock;
@@ -47,6 +50,12 @@ static int aht20_update_measurements(struct i2c_client *client) {
   u8 rx[7];
   struct aht20 *aht20 = i2c_get_clientdata(client);
   mutex_lock(&aht20->lock);
+  if (aht20->valid &&
+      time_before(jiffies,
+                  aht20->lastupdate + msecs_to_jiffies(AHT20_CACHE_TIME_MS))) {
+    ret = 0;
+    goto out;
+  }
   ret = i2c_master_send(aht20->client, aht20_measure_cmd,
                         sizeof(aht20_measure_cmd));
   if (ret < 0) {
@@ -87,6 +96,7 @@ static int aht20_update_measurements(struct i2c_client *client) {
   aht20->humidity = (u64)raw_humidity * 100000 / 0x100000;
   aht20->temperature = ((u64)raw_temperature * 200000 / 0x100000) - 50000;
 
+  aht20->lastupdate = jiffies;
   aht20->valid = 1;
   ret = 0;
   goto out;
