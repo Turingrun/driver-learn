@@ -4,6 +4,7 @@
 #include <linux/device.h>
 #include <linux/errno.h>
 #include <linux/gfp.h>
+#include <linux/hwmon.h>
 #include <linux/i2c.h>
 #include <linux/init.h>
 #include <linux/mod_devicetable.h>
@@ -61,9 +62,10 @@ static int aht20_update_measurements(struct i2c_client *client) {
   if (ret < 0)
     goto out;
 
-  if (ret != sizeof(rx))
+  if (ret != sizeof(rx)) {
     ret = -EIO;
-  goto out;
+    goto out;
+  }
 
   if ((rx[0] & AHT20_STATUS_BUSY)) {
     ret = -EBUSY;
@@ -78,8 +80,12 @@ static int aht20_update_measurements(struct i2c_client *client) {
   raw_humidity = ((u32)rx[1] << 12 | (u32)rx[2] << 4 | (u32)rx[3] >> 4);
   raw_temperature = ((u32)(rx[3] & 0x0f) << 16) | ((u32)rx[4] << 8) | rx[5];
 
-  aht20->humidity = raw_humidity * 100000 / 0x100000;
-  aht20->temperature = raw_temperature * 200000 / 0x100000 - 50;
+  /* hwmon reports temperature in millidegrees Celsius and relative
+   * humidity in millipercent.  Cast before multiplying so the scaled
+   * intermediate values cannot overflow u32.
+   */
+  aht20->humidity = (u64)raw_humidity * 100000 / 0x100000;
+  aht20->temperature = ((u64)raw_temperature * 200000 / 0x100000) - 50000;
 
   aht20->valid = 1;
   ret = 0;
@@ -90,8 +96,75 @@ out:
   return ret;
 };
 
+static umode_t aht20_is_visible(const void *drvdata,
+                                enum hwmon_sensor_types type, u32 attr,
+                                int channel) {
+  switch (type) {
+  case hwmon_temp:
+    if (attr == hwmon_temp_input)
+      return 0444;
+    break;
+
+  case hwmon_humidity:
+    if (attr == hwmon_humidity_input)
+      return 0444;
+    break;
+
+  default:
+    break;
+  }
+
+  return 0;
+}
+
+static int aht20_read(struct device *dev, enum hwmon_sensor_types type,
+                      u32 attr, int channel, long *val) {
+  struct aht20 *aht20 = dev_get_drvdata(dev);
+  int ret;
+
+  ret = aht20_update_measurements(aht20->client);
+  if (ret)
+    return ret;
+
+  switch (type) {
+  case hwmon_temp:
+    if (attr == hwmon_temp_input) {
+      *val = aht20->temperature;
+      return 0;
+    }
+    break;
+
+  case hwmon_humidity:
+    if (attr == hwmon_humidity_input) {
+      *val = aht20->humidity;
+      return 0;
+    }
+    break;
+
+  default:
+    break;
+  }
+
+  return -EOPNOTSUPP;
+}
+
+static const struct hwmon_channel_info *aht20_info[] = {
+    HWMON_CHANNEL_INFO(temp, HWMON_T_INPUT),
+    HWMON_CHANNEL_INFO(humidity, HWMON_H_INPUT), NULL};
+
+static const struct hwmon_ops aht20_hwmon_ops = {
+    .is_visible = aht20_is_visible,
+    .read = aht20_read,
+};
+
+static const struct hwmon_chip_info aht20_chip_info = {
+    .ops = &aht20_hwmon_ops,
+    .info = aht20_info,
+};
+
 static int aht20_probe(struct i2c_client *client) {
   struct device *dev = &client->dev;
+  struct device *hwmon_dev;
   struct aht20 *aht20;
   if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
     return -EOPNOTSUPP;
@@ -106,10 +179,13 @@ static int aht20_probe(struct i2c_client *client) {
 
   i2c_set_clientdata(client, aht20);
 
+  hwmon_dev = devm_hwmon_device_register_with_info(dev, client->name, aht20,
+                                                   &aht20_chip_info, NULL);
+
   dev_info(&client->dev, "my sensor probe\n");
 
   dev_info(&client->dev, "i2c addr = 0x%02x\n", client->addr);
-  return 0;
+  return PTR_ERR_OR_ZERO(hwmon_dev);
 };
 static int aht20_remove(struct i2c_client *client) {
   dev_info(&client->dev, "my sensor remove\n");
