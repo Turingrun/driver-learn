@@ -11,14 +11,14 @@
 #include <linux/mutex.h>
 
 #define AHT20_INTERVAL 80
-#define AHT20_DETECT 0x98
-
+#define AHT20_STATUS_BUSY BIT(7)
+#define AHT20_STATUS_CALIBRATED BIT(3)
 struct aht20 {
   struct i2c_client *client;
   struct mutex lock;
   unsigned long lastupdate;
-  int temperature;
-  int humidity;
+  u64 temperature;
+  u64 humidity;
   u8 valid;
 };
 
@@ -40,39 +40,50 @@ static u8 aht20_measure_crc8(u8 *buf, u8 num) {
 
 static int aht20_update_measurements(struct i2c_client *client) {
   int ret = 0;
-  u32 raw_humidity, raw_temperature = 0;
+  u32 raw_humidity;
+  u32 raw_temperature;
   u8 aht20_measure_cmd[3] = {0xAC, 0x33, 0x00};
   u8 rx[7];
   struct aht20 *aht20 = i2c_get_clientdata(client);
   mutex_lock(&aht20->lock);
   ret = i2c_master_send(aht20->client, aht20_measure_cmd,
                         sizeof(aht20_measure_cmd));
+  if (ret < 0) {
+    goto out;
+  }
   if (ret != sizeof(aht20_measure_cmd)) {
-    goto fail;
+    ret = -EIO;
+    goto out;
   }
   msleep(AHT20_INTERVAL);
   ret = i2c_master_recv(aht20->client, rx, sizeof(rx));
-  if (ret != sizeof(rx)) {
-    goto fail;
+
+  if (ret < 0)
+    goto out;
+
+  if (ret != sizeof(rx))
+    ret = -EIO;
+  goto out;
+
+  if ((rx[0] & AHT20_STATUS_BUSY)) {
+    ret = -EBUSY;
+    goto out;
   }
+
   if (aht20_measure_crc8(rx, 6) != rx[6]) {
-    goto fail;
+    ret = -EBADMSG;
+    goto out;
   }
-  if ((rx[0] & AHT20_DETECT) != 0x18) {
-    goto fail;
-  }
+
   raw_humidity = ((u32)rx[1] << 12 | (u32)rx[2] << 4 | (u32)rx[3] >> 4);
   raw_temperature = ((u32)(rx[3] & 0x0f) << 16) | ((u32)rx[4] << 8) | rx[5];
 
-  aht20->humidity = raw_humidity * 100 / 0x100000;
-  aht20->temperature = raw_temperature * 200 / 0x100000 - 50;
+  aht20->humidity = raw_humidity * 100000 / 0x100000;
+  aht20->temperature = raw_temperature * 200000 / 0x100000 - 50;
 
   aht20->valid = 1;
   ret = 0;
   goto out;
-
-fail:
-  aht20->valid = 0;
 
 out:
   mutex_unlock(&aht20->lock);
