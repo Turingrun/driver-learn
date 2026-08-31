@@ -1,10 +1,8 @@
-#include "linux/delay.h"
-#include "linux/dev_printk.h"
-#include "linux/i2c.h"
-#include "linux/string.h"
-#include "linux/types.h"
+#include <linux/crc8.h>
+#include <linux/delay.h>
+#include <linux/dev_printk.h>
 #include <linux/device.h>
-#include <linux/err.h>
+#include <linux/errno.h>
 #include <linux/gfp.h>
 #include <linux/i2c.h>
 #include <linux/init.h>
@@ -21,13 +19,13 @@ struct aht20 {
   unsigned long lastupdate;
   int temperature;
   int humidity;
-  uint8_t valid;
+  u8 valid;
 };
 
-static uint8_t aht20_measure_crc8(uint8_t *buf, uint8_t num) {
-  uint8_t i;
-  uint8_t byte;
-  uint8_t crc = 0xFF;
+static u8 aht20_measure_crc8(u8 *buf, u8 num) {
+  u8 i;
+  u8 byte;
+  u8 crc = 0xFF;
   for (byte = 0; byte < num; byte++) {
     crc ^= (buf[byte]);
     for (i = 8; i > 0; --i) {
@@ -42,18 +40,19 @@ static uint8_t aht20_measure_crc8(uint8_t *buf, uint8_t num) {
 
 static int aht20_update_measurements(struct i2c_client *client) {
   int ret = 0;
-  uint32_t data = 0;
-  uint8_t aht20_measure_cmd[3] = {0xAC, 0x33, 0x00};
-  uint8_t rx[7];
+  u32 raw_humidity, raw_temperature = 0;
+  u8 aht20_measure_cmd[3] = {0xAC, 0x33, 0x00};
+  u8 rx[7];
   struct aht20 *aht20 = i2c_get_clientdata(client);
   mutex_lock(&aht20->lock);
-  ret = i2c_master_send(aht20->client, aht20_measure_cmd, 3);
-  if (ret < 0) {
+  ret = i2c_master_send(aht20->client, aht20_measure_cmd,
+                        sizeof(aht20_measure_cmd));
+  if (ret != sizeof(aht20_measure_cmd)) {
     goto fail;
   }
   msleep(AHT20_INTERVAL);
-  ret = i2c_master_recv(aht20->client, rx, 7);
-  if (ret != 7) {
+  ret = i2c_master_recv(aht20->client, rx, sizeof(rx));
+  if (ret != sizeof(rx)) {
     goto fail;
   }
   if (aht20_measure_crc8(rx, 6) != rx[6]) {
@@ -62,16 +61,22 @@ static int aht20_update_measurements(struct i2c_client *client) {
   if ((rx[0] & AHT20_DETECT) != 0x18) {
     goto fail;
   }
-  memcpy(&data, rx + 1, 3);
-  aht20->humidity = ((data >> 4) / 0x100000) * 100;
-  memcpy(&data, rx + 3, 3);
-  aht20->temperature = ((data & 0xFFFFF) / 0x100000) * 200 - 50;
+  raw_humidity = ((u32)rx[1] << 12 | (u32)rx[2] << 4 | (u32)rx[3] >> 4);
+  raw_temperature = ((u32)(rx[3] & 0x0f) << 16) | ((u32)rx[4] << 8) | rx[5];
+
+  aht20->humidity = raw_humidity * 100 / 0x100000;
+  aht20->temperature = raw_temperature * 200 / 0x100000 - 50;
+
   aht20->valid = 1;
-fail: {
+  ret = 0;
+  goto out;
+
+fail:
   aht20->valid = 0;
+
+out:
   mutex_unlock(&aht20->lock);
-}
-  return 0;
+  return ret;
 };
 
 static int aht20_probe(struct i2c_client *client) {
