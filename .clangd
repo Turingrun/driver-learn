@@ -16,5 +16,3 @@ CompileFlags:
     -mno-global-merge,
     -mabi=lp64
   ]
-Completion:
-  HeaderInsertion: Never
