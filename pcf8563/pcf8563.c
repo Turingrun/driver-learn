@@ -2,6 +2,8 @@
 #include "linux/errno.h"
 #include "linux/gfp.h"
 #include "linux/i2c.h"
+#include "linux/interrupt.h"
+#include "linux/irqreturn.h"
 #include "linux/mutex.h"
 #include <linux/bcd.h>
 #include <linux/device.h>
@@ -12,7 +14,15 @@
 struct pcf8563 {
   struct i2c_client *client;
   struct mutex lock;
+  int irq;
 };
+
+static irqreturn_t pcf8563_irq_thread(int irq, void *dev_id) {
+  struct pcf8563 *data = dev_id;
+  dev_info(&data->client->dev, "interrupt received: irq=%d\n", irq);
+  return IRQ_HANDLED;
+}
+
 static int pcf8563_read_time(struct device *dev, struct rtc_time *time) {
   int ret = 0;
   u8 reg = 0x00;
@@ -114,7 +124,17 @@ static int pcf8563_probe(struct i2c_client *client) {
     goto out;
   }
   data->client = client;
+  if (client->irq > 0) {
+    ret = devm_request_threaded_irq(
+        &client->dev, client->irq, NULL, pcf8563_irq_thread,
+        IRQF_ONESHOT | IRQF_TRIGGER_LOW, "pcf8563", data);
+  }
+  if (ret) {
+    dev_err(&client->dev, "failed to request irq %d: %d\n", client->irq, ret);
+    return ret;
+  }
 
+  dev_info(&client->dev, "interrupts is %d\n", client->irq);
   mutex_init(&data->lock);
   i2c_set_clientdata(client, data);
   rtc_dev = devm_rtc_device_register(&client->dev, NULL, &pcf8563_ops, NULL);
